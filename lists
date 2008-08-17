@@ -1,0 +1,69 @@
+; List-processing procedures
+; Uses: startup
+
+(define reverse
+  (lambda (L) (revappend L '())))
+
+(define revappend
+  (lambda (L1 L2)
+    (while L1
+      (set! L2 (cons (car L1) L2))
+      (set! L1 (cdr L1)))
+    L2))
+
+(define append!
+  (lambda (L1 L2)
+    (set-cdr! (last-pair L1) L2)
+    L1))
+
+(define last-pair
+  (lambda (lst)
+    (while (cdr lst)
+      (set! lst (cdr lst)))
+    lst))
+
+(define memq (lambda (x lst) (member:test eq? x lst)))
+(define member (lambda (x lst) (member:test equal? x lst)))
+
+(define member:test 
+  (lambda (=? x lst)
+    (while (and lst (not (=? x (car lst))))
+      (set! lst (cdr lst)))
+    lst))
+
+(define assq (lambda (key pairs) (assoc:test eq? key pairs)))
+(define assoc (lambda (key pairs) (assoc:test equal? key pairs)))
+
+(define assoc:test
+  (lambda (=? key pairs)
+    (while (and pairs (not (=? key (caar pairs))))
+      (set! pairs (cdr pairs)))
+    (and pairs (car pairs))))
+
+(define sublis
+  (lambda (a-list exp)
+    (cond
+      ((null? exp) '())
+      ((atom? exp)
+       (let ((binding (assq exp a-list)))
+         (if binding (cdr binding) exp)))
+      (else
+        (cons (sublis a-list (car exp))
+              (sublis a-list (cdr exp)))))))
+    
+(define remove
+  (lambda (key lst)
+    (if (null? lst)
+        '()
+        (if (eq? key (car lst))
+            (cdr lst)
+            (cons (car lst)
+                  (remove key (cdr lst)))))))
+
+(define list-ref
+  (lambda (lst n)
+    (if (null? lst) 
+        '()
+        (if (= n 0) 
+            (car lst)
+            (list-ref (cdr lst) (- n 1))))))

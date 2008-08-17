@@ -1,0 +1,33 @@
+; Numeric procedures
+; Uses: startup
+
+(define > (lambda (n1 n2) (< n2 n1)))
+(define <= (lambda (n1 n2) (not (< n2 n1))))
+(define >= (lambda (n1 n2) (not (< n1 n2))))
+
+(define abs
+  (lambda (n)
+    (if (< n 0) (- 0 n) n)))
+
+(define minus (lambda (n) (- 0 n)))
+
+(define even? (lambda (n) (= (remainder n 2) 0)))
+(define odd? (lambda (n) (not (even? n))))
+
+(define zero? (lambda (n) (= n 0)))
+
+(define 1+ (lambda (n) (+ n 1)))
+(define -1+ (lambda (n) (- n 1)))
+
+(define min (lambda (n1 n2) (if (< n1 n2) n1 n2)))
+(define max (lambda (n1 n2) (if (< n1 n2) n2 n1)))
+
+(define expt                    ; Pre: 0 <= power
+  (lambda (base power)
+    (if (= power 0)
+        1
+        (if (even? power)
+            (square (expt base (quotient power 2)))
+            (* base (expt base (- power 1)))))))
+
+(define square (lambda (n) (* n n)))

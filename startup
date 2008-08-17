@@ -1,0 +1,141 @@
+; Syntax and shorthands
+
+(define = eq?)
+(define not null?)
+
+(define caar (lambda (lst) (car (car lst))))
+(define cdar (lambda (lst) (cdr (car lst))))
+(define caddr (lambda (lst) (car (cddr lst))))
+(define cadddr (lambda (lst) (cadr (cddr lst))))
+
+; I/O
+
+(define print
+  (lambda (object)
+    (write object)
+    (newline)))
+
+; The least dispensable list operations
+
+(define equal?
+  (lambda (x1 x2)
+    (if (eq? x1 x2)
+        t
+        (if (pair? x1)
+            (if (pair? x2)
+                (if (equal? (car x1) (car x2))
+                    (equal? (cdr x1) (cdr x2))))))))
+
+(define length
+  (lambda (lst)
+    ((lambda (n)
+       (while lst
+         (set! n (+ n 1))
+         (set! lst (cdr lst)))
+       n)
+     0)))
+
+(define append
+  (lambda (L1 L2)
+    (if (null? L1)
+        L2
+        (cons (car L1)
+              (append (cdr L1) L2)))))
+
+(define map
+  (lambda (proc lst)
+    ((lambda (result)
+       (while lst
+         (set! result (cons (proc (car lst)) result))
+         (set! lst (cdr lst)))
+       (reverse! result))
+     '())))
+
+(define for-each
+  (lambda (proc lst)
+    (while lst
+      (proc (car lst))
+      (set! lst (cdr lst)))))
+
+; Macros
+
+(define macroexpand
+  (lambda (exp)
+    (if (atom? exp)
+        exp
+        (if (get (car exp) 'special-form)
+            ((get (car exp) 'special-form) exp)
+            (if (get (car exp) 'macro)
+                (macroexpand ((get (car exp) 'macro) (cdr exp)))
+                (map macroexpand exp))))))
+
+(put 'quote 'special-form
+  (lambda (exp) exp))
+
+(put 'lambda 'special-form
+  (lambda (exp)
+    (cons 'lambda
+      (cons (cadr exp)
+        (map macroexpand (cddr exp))))))
+
+; Other special forms don't need special treatment, but you might want
+; to add syntax-checking.
+
+(define define-macro
+  (lambda (keyword expander)
+    (put keyword 'macro expander)))
+
+(define-macro 'and
+  (lambda (args)
+    (if (null? args)
+        t
+        (if (null? (cdr args))
+            (car args)
+            (list 'if (car args) (cons 'and (cdr args)))))))
+
+(define-macro 'or
+  (lambda (args)
+    (if (null? args)
+        nil
+        (if (null? (cdr args))
+            (car args)
+            (list
+              ((lambda (test-var)
+                (list 'lambda (list test-var)
+                  (list 'if test-var test-var (cons 'or (cdr args)))))
+               (gensym))
+              (car args))))))
+
+(define-macro 'let
+  (lambda (args)
+    (cons
+      (cons 'lambda (cons (map car (car args)) (cdr args)))
+      (map cadr (car args)))))
+
+(define make-begin
+  (lambda (lst)
+    (if (null? (cdr lst))
+        (car lst)
+        (cons 'begin lst))))
+
+(define-macro 'cond
+  (lambda (clauses)
+    (if (null? clauses)
+        nil
+        (if (eq? (caar clauses) 'else)
+            (make-begin (cdar clauses))
+            (list 'if
+                  (caar clauses)
+                  (make-begin (cdar clauses))
+                  (cons 'cond (cdr clauses)))))))
+
+; This procedure replaces the system default read-eval-print loop:
+
+(define top-level-driver
+  (lambda ()
+    (write '>)
+    ((lambda (exp)
+       (if (eq? the-eof-object exp)
+           (set! top-level-driver nil)
+           (print (eval (macroexpand exp)))))
+     (read))))

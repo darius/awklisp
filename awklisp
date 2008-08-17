@@ -1,0 +1,500 @@
+#!/usr/bin/awk -f
+
+# --- Representation of Lisp data
+
+BEGIN {
+    a_number = 0
+    pair_ptr = a_pair = 1
+    symbol_ptr = a_symbol = 2
+    
+    type_name[a_number] = "number"
+    type_name[a_pair] = "pair"
+    type_name[a_symbol] = "symbol"
+}
+
+function is(type, expr) 
+{ 
+    if (expr % 4 != type) 
+        error("Expected a " type_name[type] ", not a " type_name[expr % 4]) 
+    return expr 
+}
+
+function is_number(expr)        { return expr % 4 == 0 }
+function is_pair(expr)          { return expr % 4 == 1 }
+function is_symbol(expr)        { return expr % 4 == 2 }
+function is_atom(expr)          { return expr % 4 != 1 }
+
+function make_number(n)         { return n * 4 }
+
+function numeric_value(expr)
+{ 
+    if (expr % 4 != 0) error("Not a number")
+    return expr / 4 
+}
+
+# Return the symbol :string names.
+function string_to_symbol(string)
+{
+    if (string in intern)
+        return intern[string]
+    symbol_ptr += 4
+    intern[string] = symbol_ptr
+    printname[symbol_ptr] = string
+    return symbol_ptr
+}
+
+# Define a primitive procedure, with :nparams parameters,
+# bound to the symbol named :name.
+function def_prim(name, nparams,        sym)
+{
+    sym = string_to_symbol(name)
+    value[sym] = string_to_symbol(sprintf("#<Primitive %s>", name))
+    if (nparams != "")
+        num_params[value[sym]] = nparams
+    return value[sym]
+}
+
+# --- Garbage collection
+
+# Make a new pair.
+function cons(the_car, the_cdr)
+{
+    while (pair_ptr in marks) {
+        delete marks[pair_ptr]
+        pair_ptr += 4
+    }
+    if (pair_ptr == pair_limit)
+        gc(the_car, the_cdr)
+    car[pair_ptr] = the_car
+    cdr[pair_ptr] = the_cdr
+    pair_ptr += 4
+    return pair_ptr - 4
+}
+
+function protect(object)        { protected[++protected_ptr] = object }
+function unprotect()            { --protected_ptr }
+
+function mark(object)
+{
+    while (is_pair(object) && !(object in marks)) {             #** speed
+        marks[object] = 1
+        mark(car[object])
+        object = cdr[object]
+    }
+}
+
+function gc(the_car, the_cdr,   p, i)
+{
+    if (loud_gc) 
+        printf("\nGC...") >"/dev/stderr"
+    mark(the_car); mark(the_cdr)
+    for (p in protected)
+        mark(protected[p])
+    for (p in stack)
+        mark(stack[p])
+    for (p in value)
+        mark(value[p])
+    for (p in property) {
+        i = index(SUBSEP, p)
+        mark(substr(p, 1, i-1))
+        mark(substr(p, i+1))
+        mark(property[p])
+    }
+    pair_ptr = a_pair
+    while (pair_ptr in marks) {
+        delete marks[pair_ptr]
+        pair_ptr += 4
+    }
+    if (pair_ptr == pair_limit) {
+        if (loud_gc)
+            printf("Expanding heap...") >"/dev/stderr"
+        pair_limit += 4 * heap_increment
+    }
+}
+
+# --- Set up
+
+BEGIN { 
+    srand()
+    
+    frame_ptr = stack_ptr = 0
+
+    if (heap_increment == "") heap_increment = 1500
+    pair_limit = a_pair + 4 * heap_increment
+
+    NIL         = string_to_symbol("nil")
+    T           = string_to_symbol("t")
+    value[NIL] = NIL
+    value[T] = T
+    car[NIL] = cdr[NIL] = NIL   # this is convenient in a couple places...
+
+    THE_EOF_OBJECT = string_to_symbol("#eof")
+    value[string_to_symbol("the-eof-object")] = THE_EOF_OBJECT
+    eof = "(eof)"
+
+    QUOTE       = string_to_symbol("quote");    is_special[QUOTE] = 1
+    LAMBDA      = string_to_symbol("lambda");   is_special[LAMBDA] = 1
+    IF          = string_to_symbol("if");       is_special[IF] = 1
+    SETQ        = string_to_symbol("set!");     is_special[SETQ] = 1
+    DEFINE      = string_to_symbol("define");   is_special[DEFINE] = 1
+    PROGN       = string_to_symbol("begin");    is_special[PROGN] = 1
+    WHILE       = string_to_symbol("while");    is_special[WHILE] = 1
+
+    EQ          = def_prim("eq?", 2)
+    NULL        = def_prim("null?", 1)
+    CAR         = def_prim("car", 1)
+    CDR         = def_prim("cdr", 1)
+    CADR        = def_prim("cadr", 1)
+    CDDR        = def_prim("cddr", 1)
+    CONS        = def_prim("cons", 2)
+    LIST        = def_prim("list")
+    EVAL        = def_prim("eval", 1)
+    APPLY       = def_prim("apply", 2)
+    READ        = def_prim("read", 0)
+    WRITE       = def_prim("write", 1)
+    NEWLINE     = def_prim("newline", 0)
+    ADD         = def_prim("+", 2)
+    SUB         = def_prim("-", 2)
+    MUL         = def_prim("*", 2)
+    DIV         = def_prim("quotient", 2)
+    MOD         = def_prim("remainder", 2)
+    LT          = def_prim("<", 2)
+    GET         = def_prim("get", 2)
+    PUT         = def_prim("put", 3)
+    ATOMP       = def_prim("atom?", 1)
+    PAIRP       = def_prim("pair?", 1)
+    SYMBOLP     = def_prim("symbol?", 1)
+    NUMBERP     = def_prim("number?", 1)
+    SETCAR      = def_prim("set-car!", 2)
+    SETCDR      = def_prim("set-cdr!", 2)
+    NREV        = def_prim("reverse!", 1)
+    GENSYM      = def_prim("gensym", 0)
+    RANDOM      = def_prim("random", 1)
+    ERROR       = def_prim("error")
+
+    DRIVER      = string_to_symbol("top-level-driver")
+}
+
+# --- The interpreter
+
+BEGIN { 
+    for (;;) {
+        if (DRIVER in value && value[DRIVER] != NIL)
+            apply(value[DRIVER])
+        else {
+            expr = read()
+            if (expr == THE_EOF_OBJECT)
+                break;
+            protect(expr)
+            print_expr(eval(expr))
+            unprotect()
+        }
+    }
+    
+    if (profiling)
+        for (proc in call_count) {
+            printf("%5d ", call_count[proc])
+            print_expr(proc)
+        }
+}
+
+# All the interpretation routines have the precondition that their
+# arguments are protected from garbage collection.
+
+function eval(expr,     old_frame_ptr)
+{
+    if (is_atom(expr))                  #** speed
+        if (is_symbol(expr)) {
+            if (!(expr in value)) error("Unbound variable: " printname[expr])
+            return value[expr]
+        } else
+            return expr
+
+    op = car[expr]              # op is global to save awk stack space
+
+    if (!(op in is_special)) {
+        old_frame_ptr = frame_ptr
+        frame_ptr = stack_ptr
+
+        eval_rands(cdr[expr])
+        protect(proc = eval(car[expr]))
+        result = apply(proc)
+        unprotect()
+
+        stack_ptr = frame_ptr
+        frame_ptr = old_frame_ptr
+        return result
+    }
+
+    if (op == QUOTE)    return car[cdr[expr]]
+    if (op == LAMBDA)   return expr
+    if (op == IF)       return eval(car[cdr[expr]]) != NIL \
+                                ? eval(car[cdr[cdr[expr]]])     \
+                                : eval(car[cdr[cdr[cdr[expr]]]])
+    if (op == PROGN)    return progn(cdr[expr])
+    if (op == SETQ)     {
+        if (!(car[cdr[expr]] in value))
+            error("Unbound variable: " printname[car[cdr[expr]]])
+        return value[car[cdr[expr]]] = eval(car[cdr[cdr[expr]]])
+    }
+    if (op == WHILE) {
+        while (eval(car[cdr[expr]]) != NIL)
+            progn(cdr[cdr[expr]])
+        return NIL
+    }
+    if (op == DEFINE) {
+        value[car[cdr[expr]]] = eval(car[cdr[cdr[expr]]])
+        return car[cdr[expr]]
+    }
+    
+    error("BUG: Unknown special form")
+}
+
+# Evaluate a sequence of expressions, returning the last value.
+function progn(exprs)
+{
+    for (; cdr[exprs] != NIL; exprs = cdr[exprs])
+        eval(car[exprs])
+    return eval(car[exprs])
+}
+
+# Evaluate the operands of a procedure, pushing the results on the stack.
+function eval_rands(rands)
+{
+    for (; rands != NIL; rands = cdr[rands])
+        stack[stack_ptr++] = eval(car[rands])
+}
+
+# Call the procedure :proc, with args stack[frame_ptr]..stack[stack_ptr-1]
+# (in that order).
+function apply(proc)
+{
+    if (profiling) 
+        ++call_count[proc]
+    if (car[proc] == LAMBDA) {
+        extend_env(car[cdr[proc]])
+        result = progn(cdr[cdr[proc]])  # result is global to save stack space
+        unwind_env(car[cdr[proc]])
+        return result
+    }
+    if (proc in num_params && num_params[proc] != stack_ptr - frame_ptr)
+        error("Wrong number of arguments to " printname[cdr[proc]])
+
+    if (proc == CAR)    return car[is(a_pair, stack[frame_ptr])]
+    if (proc == CDR)    return cdr[is(a_pair, stack[frame_ptr])]
+    if (proc == CONS)   return cons(stack[frame_ptr], stack[frame_ptr+1])
+    if (proc == NULL)   return stack[frame_ptr] == NIL ? T : NIL
+    if (proc == EQ)     return stack[frame_ptr] == stack[frame_ptr+1] ? T : NIL
+    if (proc == ATOMP)  return is_atom(stack[frame_ptr]) ? T : NIL
+    if (proc == ADD)    return is(a_number, stack[frame_ptr]) + is(a_number, stack[frame_ptr+1])
+    if (proc == SUB)    return is(a_number, stack[frame_ptr]) - is(a_number, stack[frame_ptr+1])
+    if (proc == MUL)    return make_number(numeric_value(stack[frame_ptr]) * numeric_value(stack[frame_ptr+1]))
+    if (proc == DIV)    return make_number(int(numeric_value(stack[frame_ptr]) / numeric_value(stack[frame_ptr+1])))
+    if (proc == MOD)    return make_number(numeric_value(stack[frame_ptr]) % numeric_value(stack[frame_ptr+1]))
+    if (proc == LT)     return (stack[frame_ptr] + 0 < stack[frame_ptr+1] + 0) ? T : NIL
+    if (proc == GET)    return (stack[frame_ptr], stack[frame_ptr+1]) in property ? property[stack[frame_ptr], stack[frame_ptr+1]] : NIL
+    if (proc == PUT)    return property[stack[frame_ptr], stack[frame_ptr+1]] = stack[frame_ptr+2]
+    if (proc == CADR)   return car[is(a_pair, cdr[is(a_pair, stack[frame_ptr])])]
+    if (proc == CDDR)   return cdr[is(a_pair, cdr[is(a_pair, stack[frame_ptr])])]
+    if (proc == LIST)   return listify_args()
+    if (proc == SYMBOLP)return is_symbol(stack[frame_ptr]) ? T : NIL
+    if (proc == PAIRP)  return is_pair(stack[frame_ptr]) ? T : NIL
+    if (proc == NUMBERP)return is_number(stack[frame_ptr]) ? T : NIL
+    if (proc == SETCAR) return car[is(a_pair, stack[frame_ptr])] = stack[frame_ptr+1]
+    if (proc == SETCDR) return cdr[is(a_pair, stack[frame_ptr])] = stack[frame_ptr+1]
+    if (proc == APPLY)  return do_apply(stack[frame_ptr], stack[frame_ptr+1])
+    if (proc == EVAL)   return eval(stack[frame_ptr])
+    if (proc == NREV)   return nreverse(stack[frame_ptr], NIL)
+    if (proc == WRITE)  { write_expr(stack[frame_ptr]); printf(" "); return NIL }
+    if (proc == NEWLINE){ printf("\n"); return NIL }
+    if (proc == READ)   return read()
+    if (proc == RANDOM) return make_number(int(rand() * numeric_value(stack[frame_ptr])))
+    if (proc == GENSYM) return string_to_symbol("#G" ++gensym_counter)
+    if (proc == ERROR)  { printf("Error!\n"); print_expr(listify_args()); exit(1) }
+    error("Unknown procedure type")
+}
+
+function do_apply(proc, args,           old_frame_ptr)
+{
+    old_frame_ptr = frame_ptr
+    frame_ptr = stack_ptr
+
+    for (; is_pair(args); args = cdr[args])
+        stack[stack_ptr++] = car[args]
+    if (args != NIL)
+        error("Bad argument to APPLY: not a proper list")
+    result = apply(proc)
+
+    stack_ptr = frame_ptr
+    frame_ptr = old_frame_ptr
+    return result
+}
+
+function listify_args(          p, result)
+{
+    result = NIL
+    for (p = stack_ptr - 1; frame_ptr <= p; --p)
+        result = cons(stack[p], result)
+    return result
+}
+
+# --- The environment
+# The current environment is represented by the set of values
+# value[sym] where sym is a symbol.  extend_env(vars) adds a new
+# set of bindings for vars, saving the old values; unwind_env(vars)
+# restores those old values.  The new value for the nth member of
+# vars is frame_ptr[n]; coincidentally, that's also where we 
+# store away the old value, since that stack frame's not needed 
+# for anything else after the extend_env() call.
+
+function extend_env(vars,       p, temp)
+{
+    for (p = frame_ptr; vars != NIL; vars = cdr[vars]) {
+        if (p == stack_ptr) 
+            error("Too many arguments to procedure")
+        temp = value[car[vars]]
+        value[car[vars]] = stack[p]
+        stack[p] = temp
+        ++p
+    }
+    if (p != stack_ptr) 
+        error("Not enough arguments to procedure")
+}
+
+function unwind_env(vars,       p)
+{
+    for (p = frame_ptr; vars != NIL; vars = cdr[vars]) {
+        if (stack[p] == "")
+            delete value[car[vars]]
+        else
+            value[car[vars]] = stack[p]
+        ++p
+    }
+}
+
+# --- Output
+
+function print_expr(expr)
+{
+    write_expr(expr)
+    print ""
+}
+
+function write_expr(expr)
+{
+    if (is_atom(expr)) {
+        if (!is_symbol(expr))
+            printf("%d", numeric_value(expr))
+        else {
+            if (!(expr in printname))
+                error("BUG: " expr " has no printname")
+            printf("%s", printname[expr])
+        }
+    } else {
+        printf("(")
+        write_expr(car[expr])
+        for (expr = cdr[expr]; is_pair(expr); expr = cdr[expr]) {
+            printf(" ")
+            write_expr(car[expr])
+        }
+        if (expr != NIL) {
+            printf(" . ")
+            write_expr(expr)
+        }
+        printf(")")
+    }
+}
+
+# --- Input
+
+function read(          committed,      result)
+{
+    skip_blanks()
+    if (token == eof)
+        if (committed)
+            error("Unexpected EOF")
+        else
+            return THE_EOF_OBJECT
+    if (token == "(") {                 # read a list
+        advance()
+        result = NIL
+        for (;;) {
+            skip_blanks()
+            if (token == ".") {
+                advance()
+                after_dot = read(1)
+                skip_blanks()
+                if (token != ")")
+                    error("')' expected")
+                advance()
+                return nreverse(result, after_dot)
+            } else if (token == ")") {
+                advance()
+                return nreverse(result, NIL)
+            } else {
+                protect(result)
+                result = cons(read(1), result)
+                unprotect()
+            }
+        }
+    } else if (token == "'") {          # a quoted expression
+        advance()
+        return cons(QUOTE, cons(read(1), NIL))
+    } else if (token ~ /^-?[0-9]+$/) {  # a number
+        result = make_number(token)
+        advance()
+        return result
+    } else {                            # a symbol
+        result = string_to_symbol(token)
+        advance()
+        return result
+    }
+}
+
+function skip_blanks()
+{
+    while (token ~ /^[ \t]*$/)
+        advance()
+}
+
+function advance()
+{
+    if (token == eof) return eof
+    if (token == "") {
+        if (getline line <= 0) {
+            token = eof
+            return
+        }
+    }
+    if (match(line, "^[()'.]") ||
+        match(line, "^[_A-Za-z0-9=!@$%&*<>?+\\-*/:]+") ||
+        match(line, "^[ \\t]+")) {
+        token = substr(line, RSTART, RLENGTH)
+        line = substr(line, RLENGTH+1)
+    } else if (line == "" || substr(line, 1, 1) == ";")
+        token = ""      # this kludge permits interactive use
+    else
+        error("Lexical error starting at " line)
+}
+
+# --- Miscellany
+
+# Destructively reverse :list and append :reversed_head.
+function nreverse(list, reversed_head,          tail)
+{
+    while (is_pair(list)) {             #** speed?
+        tail = cdr[list]
+        cdr[list] = reversed_head
+        reversed_head = list
+        list = tail
+    }
+    if (list != NIL)
+        error("Not a proper list - reverse!")
+    return reversed_head
+}
+
+function error(reason)
+{
+    print "ERROR: " reason >"/dev/stderr"
+    exit(1)
+}

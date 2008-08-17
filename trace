@@ -1,0 +1,70 @@
+;** allow primitives
+; Procedure call/return tracing
+; Uses: startup
+
+(define trace
+  (lambda (var)
+    (if (get var 'traced)
+        (list var 'already 'traced)
+        (if (not (bound-to-lambda? var))
+            '(not a defined-procedure name)
+            (begin
+              (put var 'traced (eval var))
+              (set var (make-traced var))
+              var)))))
+
+(define untrace
+  (lambda (var)
+    (if (not (get var 'traced))
+        (list var 'not 'traced)
+        (begin
+          (set var (get var 'traced))
+          var))))
+
+(define bound-to-lambda?
+  (lambda (var)
+    (and (symbol? var)
+         (let ((value (eval var)))
+           (and (pair? value)
+                (eq? (car value) 'lambda))))))
+
+(define make-traced
+  (lambda (var)
+    (let ((proc (eval var)))
+      (list 'lambda (cadr proc)
+        (list '=enter= (list 'quote var) (cons 'list (cadr proc)))
+        (list '=exit= (list 'quote var)
+          (cons (list 'get (list 'quote var) (list 'quote 'traced))
+                (cadr proc)))))))
+
+(define =enter=
+  (lambda (name args)
+    (tab *indentation*)
+    (set! *indentation* (+ *indentation* 1))
+    (write 'entering)
+    (write name)
+    (write ':)
+    (for-each write args)
+    (newline)))
+
+(define =exit=
+  (lambda (name result)
+    (set! *indentation* (- *indentation* 1))
+    (tab *indentation*)
+    (write 'exiting)
+    (write name)
+    (write ':)
+    (print result)
+    result))
+
+(define *indentation* 0)
+
+(define tab
+  (lambda (n)
+    (while (< 0 n)
+      (write '>)
+      (set! n (- n 1)))))
+
+(define set
+  (lambda (var value)
+    (eval (list 'set! var (list 'quote value)))))

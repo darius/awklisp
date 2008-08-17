@@ -1,0 +1,147 @@
+Implementation notes
+
+
+1. Overview
+
+Since the code should be self-explanatory to anyone knowledgeable
+about Lisp implementation, these notes assume you know Lisp but not
+interpreters.  I haven't got around to writing up a complete
+discussion of everything, though.
+
+The code for an interpreter can be pretty low on redundancy -- this is
+natural because the whole reason for implementing a new language is to
+avoid having to code a particular class of programs in a redundant
+style in the old language.  We implement what that class of programs
+has in common just once, then use it many times.  Thus an interpreter
+has a different style of code, perhaps denser, than a typical
+application program.
+
+
+2. Data representation
+
+Conceptually, a Lisp datum is a tagged pointer, with the tag giving
+the datatype and the pointer locating the data.  We follow the common
+practice of encoding the tag into the two lowest-order bits of the
+pointer.  This is especially easy in awk, since arrays with
+non-consecutive indices are just as efficient as dense ones (so we can
+use the tagged pointer directly as an index, without having to mask
+out the tag bits).  (But, by the way, mawk accesses negative indices
+much more slowly than positive ones, as I found out when trying a
+different encoding.)
+
+This Lisp provides three datatypes: integers, lists, and symbols.  (A
+modern Lisp provides many more.)
+
+For an integer, the tag bits are zero and the pointer bits are simply
+the numeric value; thus, N is represented by N*4.  This choice of the
+tag value has two advantages.  First, we can add and subtract without
+fiddling with the tags.  Second, negative numbers fit right in.
+(Consider what would happen if N were represented by 1+N*4 instead,
+and we tried to extract the tag as N%4, where N may be either positive
+or negative.  Because of this problem and the above-mentioned
+inefficiency of negative indices, all other datatypes are represented
+by positive numbers.)
+
+
+3. The evaluation/saved-bindings stack
+
+The following is from an email discussion; it doesn't develop 
+everything from first principles but is included here in the hope
+it will be helpful.
+
+Hi.  I just took a look at awklisp, and remembered that there's more
+to your question about why we need a stack -- it's a good question.
+The real reason is because a stack is accessible to the garbage
+collector.
+
+We could have had apply() evaluate the arguments itself, and stash
+the results into variables like arg0 and arg1 -- then the case for
+ADD would look like
+
+if (proc == ADD) return is(a_number, arg0) + is(a_number, arg1)
+
+The obvious problem with that approach is how to handle calls to
+user-defined procedures, which could have any number of arguments.
+Say we're evaluating ((lambda (x) (+ x 1)) 42).  (lambda (x) (+ x 1))
+is the procedure, and 42 is the argument.  
+
+A (wrong) solution could be to evaluate each argument in turn, and
+bind the corresponding parameter name (like x in this case) to the
+resulting value (while saving the old value to be restored after we
+return from the procedure).  This is wrong because we must not 
+change the variable bindings until we actually enter the procedure --
+for example, with that algorithm ((lambda (x y) y) 1 x) would return
+1, when it should return whatever the value of x is in the enclosing
+environment.  (The eval_rands()-type sequence would be: eval the 1,
+bind x to 1, eval the x -- yielding 1 which is *wrong* -- and bind
+y to that, then eval the body of the lambda.)
+
+Okay, that's easily fixed -- evaluate all the operands and stash them
+away somewhere until you're done, and *then* do the bindings.  So 
+the question is where to stash them.  How about a global array?
+Like
+
+  for (i = 0; arglist != NIL; ++i) {
+    global_temp[i] = eval(car[arglist])
+    arglist = cdr[arglist]
+  }
+
+followed by the equivalent of extend_env().  This will not do, because
+the global array will get clobbered in recursive calls to eval().
+Consider (+ 2 (* 3 4)) -- first we evaluate the arguments to the +,
+like this: global_temp[0] gets 2, and then global_temp[1] gets the
+eval of (* 3 4).  But in evaluating (* 3 4), global_temp[0] gets set
+to 3 and global_temp[1] to 4 -- so the original assignment of 2 to
+global_temp[0] is clobbered before we get a chance to use it.  By
+using a stack[] instead of a global_temp[], we finesse this problem.
+
+You may object that we can solve that by just making the global array
+local, and that's true; lots of small local arrays may or may not be
+more efficient than one big global stack, in awk -- we'd have to try
+it out to see.  But the real problem I alluded to at the start of this
+message is this: the garbage collector has to be able to find all the
+live references to the car[] and cdr[] arrays.  If some of those
+references are hidden away in local variables of recursive procedures,
+we're stuck.  With the global stack, they're all right there for the
+gc().
+
+(In C we could use the local-arrays approach by threading a chain of
+pointers from each one to the next; but awk doesn't have pointers.)
+
+(You may wonder how the code gets away with having a number of local
+variables holding lisp values, then -- the answer is that in every
+such case we can be sure the garbage collector can find the values
+in question from some other source.  That's what this comment is
+about:
+
+# All the interpretation routines have the precondition that their
+# arguments are protected from garbage collection.
+
+In some cases where the values would not otherwise be guaranteed to
+be available to the gc, we call protect().)
+
+Oh, there's another reason why apply() doesn't evaluate the arguments 
+itself: it's called by do_apply(), which handles lisp calls like 
+(apply car '((x))) -- where we *don't* want the x to get evaluated
+by apply().
+
+
+4. Um, what I was going to write about
+
+more on data representation
+is_foo procedures slow it down by a few percent but increase clarity
+(try replacing them and other stuff with macros, time it.)
+
+gc: overview; how to write gc-safe code using protect(); point out
+        that relocating gcs introduce further complications
+
+driver loop, macros
+
+evaluation
+globals for temp values because of recursion, space efficiency
+environment -- explicit stack needed because of gc
+
+error handling, or lack thereof
+strategies for cheaply adding error recovery
+
+I/O
