@@ -88,7 +88,7 @@ function gc(the_car, the_cdr,   p, i)
     if (loud_gc) 
         printf("\nGC...") >"/dev/stderr"
     mark(the_car); mark(the_cdr)
-    for (p in protected)
+    for (p = 1; p <= protected_ptr; ++p)
         mark(protected[p])
     for (p in stack)
         mark(stack[p])

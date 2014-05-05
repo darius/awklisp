@@ -110,7 +110,7 @@ sub gc {
     if ($loud_gc) {
         printf STDERR "\nGC..."  }
     mark($the_car); mark($the_cdr);
-    for (defined $protected{$p}) { mark($protected{$p}); }
+    for ($p = 1; $p <= $protected_ptr; ++$protected_ptr) { mark($protected{$p}); }
     for (defined $stack{$p})     { mark($stack{$p}); }
     for (defined $value{$p})     { mark($value{$p}); }
     for (defined $property{$p}) {

@@ -1,0 +1,5 @@
+Andru Luvisi contributed the fix for a memory leak.
+
+The translator to Perl did not wish to be named.
+
+Sample programs were ported from PAIP and SICP.
