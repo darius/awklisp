@@ -18,6 +18,13 @@ input) among the source files.  For example:
 
 It should work with nawk and gawk, too, but even less quickly.
     
+A more substantial example: run 
+
+    awk -f awklisp startup lists eliza.lsp -
+
+and enter (eliza) at the prompt, then something like (i am talking to
+a computer).
+
 
 2. Overview
 
